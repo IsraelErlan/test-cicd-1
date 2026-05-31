@@ -1,4 +1,4 @@
-name: Sync FROM-HERE folders to branches
+name: Sync from-here folders to branches
 
 on:
   pull_request:
@@ -21,25 +21,25 @@ jobs:
             BRANCH=$(basename "$dir")
             echo "Syncing $dir → branch $BRANCH"
 
-            git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$BRANCH || true
-
-            cd /tmp/$BRANCH
-
-            if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
-              git fetch origin "$BRANCH"
-              git checkout -b "$BRANCH" origin/"$BRANCH" 
+            if git ls-remote --heads https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git "$BRANCH" | grep -q "$BRANCH"; then
+              git clone --depth 1 --branch "$BRANCH" https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$BRANCH
+              cd /tmp/$BRANCH
+              git checkout "$BRANCH"
             else
+              git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$BRANCH
+              cd /tmp/$BRANCH
               git checkout --orphan "$BRANCH"
               git rm -rf . 2>/dev/null || true
             fi
-            
 
             cp -r "$GITHUB_WORKSPACE/$dir"* . 2>/dev/null || true
 
             git add .
-            git diff --staged --quiet || git commit -m "sync: update from FROM-HERE/$BRANCH"
+            git diff --staged --quiet || git commit -m "sync: update from from-here/$BRANCH"
             git push origin "$BRANCH" --force
 
             cd $GITHUB_WORKSPACE
             rm -rf /tmp/$BRANCH
+
+            echo "✓ synced $BRANCH successfully"
           done
