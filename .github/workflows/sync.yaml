@@ -15,22 +15,36 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: src
+          fetch-depth: 0
 
-      - name: Sync each folder to its branch
+      - name: Get changed folders and commit message
+        id: meta
+        run: |
+          CHANGED=$(git diff --name-only origin/main...HEAD | grep '^from-here/' | cut -d'/' -f2 | sort -u | tr '\n' ' ')
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "folders=$CHANGED" >> $GITHUB_OUTPUT
+          echo "commit_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
+
+      - name: Sync changed folders only
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
 
-          if [ ! -d "from-here" ]; then
-            echo "✗ from-here directory not found"
-            exit 1
+          if [ -z "${{ steps.meta.outputs.folders }}" ]; then
+            echo "⚠ no changes detected in from-here"
+            exit 0
           fi
 
           FAILED=false
 
-          while IFS= read -r -d '' dir; do
-            BRANCH=$(basename "$dir")
+          for BRANCH in ${{ steps.meta.outputs.folders }}; do
+            dir="from-here/$BRANCH"
             echo "Syncing $dir → branch $BRANCH"
+
+            if [ ! -d "$GITHUB_WORKSPACE/$dir" ]; then
+              echo "⚠ skipping $BRANCH — folder not found"
+              continue
+            fi
 
             if [ -z "$(ls -A "$GITHUB_WORKSPACE/$dir")" ]; then
               echo "⚠ skipping $BRANCH — empty folder"
@@ -53,10 +67,10 @@ jobs:
               git rm -rf . 2>/dev/null || true
             fi
 
-            cp -r "$GITHUB_WORKSPACE/$dir"* . 2>/dev/null || true
+            cp -r "$GITHUB_WORKSPACE/$dir"/. . 2>/dev/null || true
 
             git add .
-            git diff --staged --quiet || git commit -m "sync: update from from-here/$BRANCH"
+            git diff --staged --quiet || git commit -m "${{ steps.meta.outputs.commit_msg }}"
 
             if ! git push origin "$BRANCH"; then
               echo "✗ failed to sync $BRANCH"
@@ -69,8 +83,7 @@ jobs:
             echo "✓ synced $BRANCH successfully"
             cd $GITHUB_WORKSPACE
             rm -rf /tmp/$BRANCH
-
-          done < <(find from-here -mindepth 1 -maxdepth 1 -type d -print0)
+          done
 
           if [ "$FAILED" = true ]; then
             exit 1
