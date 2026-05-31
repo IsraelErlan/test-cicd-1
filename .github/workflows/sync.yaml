@@ -14,75 +14,75 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: src
           fetch-depth: 0
 
-      - name: Get changed folders and commit message
+      - name: Get commit message
         id: meta
         run: |
-          CHANGED=$(git diff --name-only origin/main...HEAD | grep '^from-here/' | cut -d'/' -f2 | sort -u | tr '\n' ' ')
           COMMIT_MSG=$(git log -1 --pretty=%B)
-          echo "folders=$CHANGED" >> $GITHUB_OUTPUT
           echo "commit_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
 
-      - name: Sync changed folders only
+      - name: Sync all branches
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
 
-          if [ -z "${{ steps.meta.outputs.folders }}" ]; then
-            echo "⚠ no changes detected in from-here"
-            exit 0
-          fi
-
           FAILED=false
 
-          for BRANCH in ${{ steps.meta.outputs.folders }}; do
-            dir="from-here/$BRANCH"
-            echo "Syncing $dir → branch $BRANCH"
+          for SOURCE_BRANCH in $(git branch -r | grep -v 'HEAD' | sed 's/origin\///'); do
+            echo "Processing branch: $SOURCE_BRANCH"
 
-            if [ ! -d "$GITHUB_WORKSPACE/$dir" ]; then
-              echo "⚠ skipping $BRANCH — folder not found"
+            git clone --branch "$SOURCE_BRANCH" https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-1.git /tmp/src-$SOURCE_BRANCH 2>/dev/null || continue
+
+            if [ ! -d "/tmp/src-$SOURCE_BRANCH/from-here" ]; then
+              echo "⚠ skipping $SOURCE_BRANCH — no from-here folder"
+              rm -rf /tmp/src-$SOURCE_BRANCH
               continue
             fi
 
-            if [ -z "$(ls -A "$GITHUB_WORKSPACE/$dir")" ]; then
-              echo "⚠ skipping $BRANCH — empty folder"
-              continue
-            fi
+            for dir in /tmp/src-$SOURCE_BRANCH/from-here/*/; do
+              FOLDER=$(basename "$dir")
+              TARGET_BRANCH="$FOLDER-$SOURCE_BRANCH"
+              echo "  Syncing $FOLDER → branch $TARGET_BRANCH"
 
-            if git ls-remote --heads https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git "$BRANCH" | grep -q "$BRANCH"; then
-              git clone --depth 1 --branch "$BRANCH" https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$BRANCH
-              cd /tmp/$BRANCH
+              if [ -z "$(ls -A "$dir")" ]; then
+                echo "  ⚠ skipping $TARGET_BRANCH — empty folder"
+                continue
+              fi
 
-              git fetch --unshallow 2>/dev/null || true
-              git tag "backup-$BRANCH-$(date +%Y%m%d%H%M%S)" HEAD
-              git push origin "backup-$BRANCH-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+              if git ls-remote --heads https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git "$TARGET_BRANCH" | grep -q "$TARGET_BRANCH"; then
+                git clone --depth 1 --branch "$TARGET_BRANCH" https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$TARGET_BRANCH
+                cd /tmp/$TARGET_BRANCH
 
-              git pull origin "$BRANCH" --rebase 2>/dev/null || git rebase --abort 2>/dev/null || true
-            else
-              git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$BRANCH
-              cd /tmp/$BRANCH
-              git checkout --orphan "$BRANCH"
-              git rm -rf . 2>/dev/null || true
-            fi
+                git fetch --unshallow 2>/dev/null || true
+                git tag "backup-$TARGET_BRANCH-$(date +%Y%m%d%H%M%S)" HEAD
+                git push origin "backup-$TARGET_BRANCH-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
 
-            cp -r "$GITHUB_WORKSPACE/$dir"/. . 2>/dev/null || true
+                git pull origin "$TARGET_BRANCH" --rebase 2>/dev/null || git rebase --abort 2>/dev/null || true
+              else
+                git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$TARGET_BRANCH
+                cd /tmp/$TARGET_BRANCH
+                git checkout --orphan "$TARGET_BRANCH"
+                git rm -rf . 2>/dev/null || true
+              fi
 
-            git add .
-            git diff --staged --quiet || git commit -m "${{ steps.meta.outputs.commit_msg }}"
+              cp -r "$dir"/. . 2>/dev/null || true
 
-            if ! git push origin "$BRANCH"; then
-              echo "✗ failed to sync $BRANCH"
-              FAILED=true
+              git add .
+              git diff --staged --quiet || git commit -m "${{ steps.meta.outputs.commit_msg }}"
+
+              if ! git push origin "$TARGET_BRANCH"; then
+                echo "  ✗ failed to sync $TARGET_BRANCH"
+                FAILED=true
+              else
+                echo "  ✓ synced $TARGET_BRANCH successfully"
+              fi
+
               cd $GITHUB_WORKSPACE
-              rm -rf /tmp/$BRANCH
-              continue
-            fi
+              rm -rf /tmp/$TARGET_BRANCH
+            done
 
-            echo "✓ synced $BRANCH successfully"
-            cd $GITHUB_WORKSPACE
-            rm -rf /tmp/$BRANCH
+            rm -rf /tmp/src-$SOURCE_BRANCH
           done
 
           if [ "$FAILED" = true ]; then
