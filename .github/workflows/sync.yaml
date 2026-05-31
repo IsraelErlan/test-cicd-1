@@ -1,0 +1,29 @@
+name: Sync folder-1 to test-cicd-2
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone target repo
+        run: |
+          git clone --branch dev https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/target
+
+      - name: Copy folder-1
+        run: |
+          mkdir -p /tmp/target/folder-1
+          cp -r ./folder-1/. /tmp/target/folder-1/
+
+      - name: Commit and push
+        run: |
+          cd /tmp/target
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          git diff --staged --quiet || git commit -m "sync: update folder-1"
+          git push
