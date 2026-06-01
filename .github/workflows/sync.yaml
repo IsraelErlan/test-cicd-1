@@ -51,16 +51,15 @@ jobs:
               fi
 
               if git ls-remote --heads https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git "$TARGET_BRANCH" | grep -q "$TARGET_BRANCH"; then
-                git clone --depth 1 --branch "$TARGET_BRANCH" https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$TARGET_BRANCH
+                git clone --branch "$TARGET_BRANCH" https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$TARGET_BRANCH
                 cd /tmp/$TARGET_BRANCH
 
-                git fetch --unshallow 2>/dev/null || true
                 git tag "backup-$TARGET_BRANCH-$(date +%Y%m%d%H%M%S)" HEAD
                 git push origin "backup-$TARGET_BRANCH-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
 
                 git pull origin "$TARGET_BRANCH" --rebase 2>/dev/null || git rebase --abort 2>/dev/null || true
               else
-                git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$TARGET_BRANCH
+                git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$TARGET_BRANCH
                 cd /tmp/$TARGET_BRANCH
                 git checkout --orphan "$TARGET_BRANCH"
                 git rm -rf . 2>/dev/null || true
