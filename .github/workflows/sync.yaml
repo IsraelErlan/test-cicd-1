@@ -38,10 +38,24 @@ jobs:
           FAILED=false
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
 
-          TARGET_REPO_DIR="/tmp/target-repo"
-          git clone https://x-access-token:${GH_PAT}@github.com/IsraelErlan/test-cicd-2.git $TARGET_REPO_DIR
+          PR_SHA=$(git rev-parse HEAD)
 
-          for REMOTE_BRANCH in $(git branch -r | grep 'origin/' | grep -v 'HEAD'); do
+          CHANGED=$(git diff --name-only origin/main...HEAD | grep '^from-here/' | cut -d'/' -f2 | sort -u)
+
+          if [ -z "$CHANGED" ]; then
+            echo "⚠ no changes detected in from-here — skipping"
+            exit 0
+          fi
+
+          echo "Changed folders: $CHANGED"
+
+          TARGET_REPO_DIR="/tmp/target-repo"
+          git clone https://github.com/IsraelErlan/test-cicd-2.git $TARGET_REPO_DIR
+          cd $TARGET_REPO_DIR
+          git config http.extraheader "Authorization: Basic $(echo -n "x-access-token:${GH_PAT}" | base64)"
+          cd $GITHUB_WORKSPACE
+
+          for REMOTE_BRANCH in $(git branch -r | grep 'origin/' | grep -v 'HEAD' | grep -v 'backup-'); do
             SOURCE_BRANCH=${REMOTE_BRANCH#origin/}
             echo "Processing branch: $SOURCE_BRANCH"
 
@@ -53,11 +67,16 @@ jobs:
               continue
             fi
 
+            git checkout "$PR_SHA" --quiet
+
             for dir in from-here/*/; do
               cd $GITHUB_WORKSPACE
               [ -e "$dir" ] || break
 
               FOLDER=$(basename "$dir")
+
+              echo "$CHANGED" | grep -q "^$FOLDER$" || continue
+
               TARGET_BRANCH="$FOLDER-$SOURCE_BRANCH"
               echo "  Syncing $FOLDER → branch $TARGET_BRANCH"
 
