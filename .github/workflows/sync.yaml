@@ -19,28 +19,44 @@ jobs:
       - name: Get commit message
         id: meta
         run: |
-          COMMIT_MSG=$(git log -1 --pretty=%B)
-          echo "commit_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
+          echo "commit_msg<<EOF" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git log -1 --pretty=%B FETCH_HEAD >> $GITHUB_OUTPUT
+          else
+            git log -1 --pretty=%B >> $GITHUB_OUTPUT
+          fi
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Sync all branches
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          COMMIT_MSG: ${{ steps.meta.outputs.commit_msg || 'Automated folder sync' }}
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
 
           FAILED=false
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
 
-          for SOURCE_BRANCH in $(git branch -r | grep -v 'HEAD' | sed 's/origin\///'); do
+          TARGET_REPO_DIR="/tmp/target-repo"
+          git clone https://x-access-token:${GH_PAT}@github.com/IsraelErlan/test-cicd-2.git $TARGET_REPO_DIR
+
+          for REMOTE_BRANCH in $(git branch -r | grep 'origin/' | grep -v 'HEAD'); do
+            SOURCE_BRANCH=${REMOTE_BRANCH#origin/}
             echo "Processing branch: $SOURCE_BRANCH"
 
-            git clone --branch "$SOURCE_BRANCH" https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-1.git /tmp/src-$SOURCE_BRANCH 2>/dev/null || continue
+            cd $GITHUB_WORKSPACE
+            git checkout -B "$SOURCE_BRANCH" "$REMOTE_BRANCH" --quiet || continue
 
-            if [ ! -d "/tmp/src-$SOURCE_BRANCH/from-here" ]; then
+            if [ ! -d "from-here" ]; then
               echo "⚠ skipping $SOURCE_BRANCH — no from-here folder"
-              rm -rf /tmp/src-$SOURCE_BRANCH
               continue
             fi
 
-            for dir in /tmp/src-$SOURCE_BRANCH/from-here/*/; do
+            for dir in from-here/*/; do
+              cd $GITHUB_WORKSPACE
+              [ -e "$dir" ] || break
+
               FOLDER=$(basename "$dir")
               TARGET_BRANCH="$FOLDER-$SOURCE_BRANCH"
               echo "  Syncing $FOLDER → branch $TARGET_BRANCH"
@@ -50,36 +66,54 @@ jobs:
                 continue
               fi
 
-              if git ls-remote --heads https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git "$TARGET_BRANCH" | grep -q "$TARGET_BRANCH"; then
-                git clone --branch "$TARGET_BRANCH" https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$TARGET_BRANCH
-                cd /tmp/$TARGET_BRANCH
+              cd $TARGET_REPO_DIR
 
-                git tag "backup-$TARGET_BRANCH-$(date +%Y%m%d%H%M%S)" HEAD
-                git push origin "backup-$TARGET_BRANCH-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+              git reset --hard HEAD 2>/dev/null || true
+              git clean -fdx
+
+              IS_ORPHAN=false
+              if git ls-remote --heads origin "$TARGET_BRANCH" | grep -q "$TARGET_BRANCH"; then
+                git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+                git clean -fdx
               else
-                git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/IsraelErlan/test-cicd-2.git /tmp/$TARGET_BRANCH
-                cd /tmp/$TARGET_BRANCH
                 git checkout --orphan "$TARGET_BRANCH"
-                git rm -rf . 2>/dev/null || true
+                git rm -rf . --quiet 2>/dev/null || true
+                git clean -fdx
+                IS_ORPHAN=true
               fi
 
-              cp -r "$dir"/. . 2>/dev/null || true
+              if ! rsync -av --delete --exclude='.git/' "$GITHUB_WORKSPACE/$dir"/ .; then
+                echo "  ✗ failed to rsync files for $TARGET_BRANCH — aborting branch sync"
+                FAILED=true
+                continue
+              fi
 
               git add .
-              git diff --staged --quiet || git commit -m "${{ steps.meta.outputs.commit_msg }}"
 
-              if ! git push origin "$TARGET_BRANCH"; then
-                echo "  ✗ failed to sync $TARGET_BRANCH"
-                FAILED=true
+              if ! git diff --cached --quiet; then
+                if [ "$IS_ORPHAN" = false ]; then
+                  BACKUP_TAG="backup-$TARGET_BRANCH-$TIMESTAMP"
+                  git tag "$BACKUP_TAG" HEAD
+                  git push origin "$BACKUP_TAG" --quiet 2>/dev/null || true
+
+                  git fetch origin "$TARGET_BRANCH" 2>/dev/null || true
+                  PUSH_OPTS="--force-with-lease"
+                else
+                  PUSH_OPTS="--force"
+                fi
+
+                git commit -m "$COMMIT_MSG"
+
+                if ! git push origin "$TARGET_BRANCH" $PUSH_OPTS; then
+                  echo "  ✗ failed to push $TARGET_BRANCH"
+                  FAILED=true
+                else
+                  echo "  ✓ synced $TARGET_BRANCH successfully"
+                fi
               else
-                echo "  ✓ synced $TARGET_BRANCH successfully"
+                echo "  ~ no changes for $TARGET_BRANCH"
               fi
-
-              cd $GITHUB_WORKSPACE
-              rm -rf /tmp/$TARGET_BRANCH
             done
-
-            rm -rf /tmp/src-$SOURCE_BRANCH
           done
 
           if [ "$FAILED" = true ]; then
